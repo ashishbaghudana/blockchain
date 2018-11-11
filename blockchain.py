@@ -1,18 +1,18 @@
-import argparse
 import hashlib
 import json
-from time import time
 from urllib.parse import urlparse
-from uuid import uuid4
 
 import requests
-from flask import Flask, jsonify, request
+
+from block import Block
+from transactions import Transaction
 
 
 class Blockchain(object):
     def __init__(self):
         self.chain = []
         self.current_transactions = []
+        self.last_consensus = 0
         self.nodes = set()
 
         self.new_block(proof=100, previous_hash=1)
@@ -33,43 +33,16 @@ class Blockchain(object):
             New block.
 
         """
-        block = {
-            'index': len(self.chain) + 1,
-            'timestamp': time(),
-            'transactions': self.current_transactions,
-            'proof': proof,
-            'previous_hash': previous_hash or self.hash(self.chain[-1])
-        }
-
+        block = Block(
+            index=len(self.chain) + 1,
+            transactions=self.current_transactions,
+            proof=proof,
+            previous_hash=(previous_hash or self.hash(self.chain[-1])),
+            transaction_hashes=set(
+                [Transaction.hash(t) for t in self.current_transactions]))
         self.current_transactions = []
         self.chain.append(block)
         return block
-
-    def new_transaction(self, sender, recipient, amount):
-        """Record a new transaction on the blockchain.
-
-        Parameters
-        ----------
-        sender : str
-            Address of the sender.
-        recipient : str
-            Address of the recipient.
-        amount : float
-            Amount.
-
-        Returns
-        -------
-        int
-            Index of the block that will hold this transaction.
-
-        """
-        self.current_transactions.append({
-            'sender': sender,
-            'recipient': recipient,
-            'amount': amount
-        })
-
-        return self.last_block['index'] + 1
 
     @staticmethod
     def hash(block):
@@ -86,7 +59,8 @@ class Blockchain(object):
             SHA-256 hash of the block.
 
         """
-        block_string = json.dumps(block, sort_keys=True).encode()
+        block_string = json.dumps(
+            block.to_dictionary(), sort_keys=True).encode()
         return hashlib.sha256(block_string).hexdigest()
 
     @property
@@ -112,13 +86,14 @@ class Blockchain(object):
 
         """
         proof = 0
-        while self.valid_proof(last_proof, proof) is False:
+        previous_hash = self.hash(self.chain[-1])
+        while self.valid_proof(last_proof, proof, previous_hash) is False:
             proof += 1
         return proof
 
     @staticmethod
-    def valid_proof(last_proof, proof):
-        guess = f'{last_proof}{proof}'.encode()
+    def valid_proof(last_proof, proof, hash):
+        guess = f'{last_proof}{proof}{hash}'.encode()
         guess_hash = hashlib.sha256(guess).hexdigest()
         return guess_hash[:4] == "0000"
 
@@ -127,18 +102,17 @@ class Blockchain(object):
         self.nodes.add(parsed_url.netloc)
 
     def valid_chain(self, chain):
-        last_block = chain[0]
-        current_index = 1
+        last_block = chain[self.last_consensus]
+        current_index = self.last_consensus + 1
 
         while current_index < len(chain):
             block = chain[current_index]
-            print(f'{last_block}')
-            print(f'{block}')
             # Check that the hash of the block is correct
-            if block['previous_hash'] != self.hash(last_block):
+            if block.previous_hash != self.hash(last_block):
                 return False
             # Check that the Proof of Work is correct
-            if not self.valid_proof(last_block['proof'], block['proof']):
+            if not self.valid_proof(last_block.proof, block.proof,
+                                    block.previous_hash):
                 return False
             last_block = block
             current_index += 1
@@ -157,7 +131,7 @@ class Blockchain(object):
             response = requests.get(f'http://{node}/chain')
             if response.status_code == 200:
                 length = response.json()['length']
-                chain = response.json()['chain']
+                chain = Blockchain.deserialize_chain(response.json()['chain'])
 
                 # Check if the length is longer and the chain is valid
                 if length > max_length and self.valid_chain(chain):
@@ -168,119 +142,21 @@ class Blockchain(object):
         # than ours
         if new_chain:
             self.chain = new_chain
+            self.consensus = new_chain[-1].index
             return True
 
         return False
 
+    @staticmethod
+    def deserialize_chain(chain_obj):
+        chain = []
+        for block_obj in chain_obj:
+            block = Block.from_json(block_obj)
+            chain.append(block)
+        return chain
 
-# Instantiate the node
-app = Flask(__name__)
-
-# Generate a globally unique address for this node
-node_identifier = str(uuid4()).replace('-', '')
-
-# Instantiate the Blockchain
-blockchain = Blockchain()
-
-
-@app.route('/mine', methods=['GET'])
-def mine():
-    # We run the proof of work algorithm to get the next proof
-    last_block = blockchain.last_block
-    last_proof = last_block['proof']
-    proof = blockchain.proof_of_work(last_proof)
-
-    # We must receive a reward for finding the proof.
-    # The sender is "0" to signify that this node has mined a new coin.
-    blockchain.new_transaction(
-        sender="0",
-        recipient=node_identifier,
-        amount=1,
-    )
-
-    # Forge the new Block by adding it to the chain
-    previous_hash = blockchain.hash(last_block)
-    block = blockchain.new_block(proof, previous_hash)
-
-    response = {
-        'message': "New Block Forged",
-        'index': block['index'],
-        'transactions': block['transactions'],
-        'proof': block['proof'],
-        'previous_hash': block['previous_hash'],
-    }
-
-    return jsonify(response), 200
-
-
-@app.route('/transactions/new', methods=['POST'])
-def new_transaction():
-    values = request.get_json()
-
-    # Check that the required fields are in the POST'ed data
-    required = ['sender', 'recipient', 'amount']
-    if not all(k in values for k in required):
-        return 'Missing values', 400
-
-    # Create a new Transaction
-    index = blockchain.new_transaction(values['sender'], values['recipient'],
-                                       values['amount'])
-    response = {'message': f'Transaction will be added to Block {index}'}
-    return jsonify(response), 201
-
-
-@app.route('/chain', methods=['GET'])
-def full_chain():
-    response = {
-        'chain': blockchain.chain,
-        'length': len(blockchain.chain),
-    }
-    return jsonify(response), 200
-
-
-@app.route('/nodes/register', methods=['POST'])
-def register_nodes():
-    values = request.get_json()
-    nodes = values.get('nodes')
-    if nodes is None:
-        return jsonify({
-            "error": "Error: Please supply a valid list of nodes"
-        }), 400
-    for node in nodes:
-        blockchain.register_node(node)
-    response = {
-        'message': 'New nodes have been added',
-        'total_nodes': list(blockchain.nodes),
-    }
-    return jsonify(response), 201
-
-
-@app.route('/nodes/resolve', methods=['GET'])
-def consensus():
-    replaced = blockchain.resolve_conflicts()
-    if replaced:
-        response = {
-            'message': 'Our chain was replaced',
-            'new_chain': blockchain.chain
-        }
-    else:
-        response = {
-            'message': 'Our chain is authoritative',
-            'chain': blockchain.chain
-        }
-
-    return jsonify(response), 200
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '-p',
-        '--port',
-        help='Port to run on',
-        default=5000,
-        type=int,
-        required=False)
-    args = parser.parse_args()
-
-    app.run(host='0.0.0.0', port=args.port)
+    def serialize_chain(self):
+        chain_obj = []
+        for block in self.chain:
+            chain_obj.append(block.to_dictionary())
+        return chain_obj
