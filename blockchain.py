@@ -99,7 +99,8 @@ class Blockchain(object):
 
     def register_node(self, address):
         parsed_url = urlparse(address)
-        self.nodes.add(parsed_url.netloc)
+        node = f'{parsed_url.scheme}://{parsed_url.netloc}'
+        self.nodes.add(node)
 
     def valid_chain(self, chain):
         last_block = chain[self.last_consensus]
@@ -128,7 +129,7 @@ class Blockchain(object):
 
         # Grab and verify the chains from all the nodes in our network
         for node in neighbours:
-            response = requests.get(f'http://{node}/chain')
+            response = requests.get(f'{node}/chain')
             if response.status_code == 200:
                 length = response.json()['length']
                 chain = Blockchain.deserialize_chain(response.json()['chain'])

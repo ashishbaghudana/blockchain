@@ -1,6 +1,10 @@
 import argparse
+import socket
+import threading
+import time
 from uuid import uuid4
 
+import requests
 from flask import Flask, jsonify, request
 
 from voterchain import VoterChain
@@ -17,6 +21,13 @@ voterchain = VoterChain()
 
 @app.route('/mine', methods=['GET'])
 def mine():
+
+    voterchain.resolve_conflicts()
+
+    if len(voterchain.current_transactions) == 0:
+        response = {'message': 'No transactions to add to the block'}
+        return jsonify(response), 200
+
     # We run the proof of work algorithm to get the next proof
     last_block = voterchain.last_block
     last_proof = last_block.proof
@@ -28,6 +39,13 @@ def mine():
 
     # Forge the new Block by adding it to the chain
     previous_hash = voterchain.hash(last_block)
+    replaced = voterchain.resolve_conflicts()
+    if replaced:
+        response = {
+            'message':
+            'Chain has been altered by the addition of another block.'
+        }
+        return jsonify(response), 500
     block = voterchain.new_block(proof, previous_hash)
 
     response = {
@@ -111,6 +129,24 @@ def consensus():
     return jsonify(response), 200
 
 
+@app.route('/ping', methods=['GET'])
+def ping():
+    response = {'healthy': True}
+    return jsonify(response), 200
+
+
+@app.route('/nodes', methods=['GET'])
+def get_nodes():
+    nodes = list(voterchain.nodes.union({my_addr}))
+    return jsonify({'nodes': nodes}), 200
+
+
+def background_mining(interval=15):
+    while True:
+        time.sleep(interval)
+        requests.get('%s/mine' % my_addr)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -122,4 +158,11 @@ if __name__ == '__main__':
         required=False)
     args = parser.parse_args()
 
-    app.run(host='0.0.0.0', port=args.port)
+    my_ip = socket.gethostbyname(socket.gethostname())
+    port = args.port
+    my_addr = f'http://{my_ip}:{port}'
+
+    mining_thread = threading.Thread(target=background_mining)
+    mining_thread.start()
+
+    app.run(host='0.0.0.0', port=args.port, threaded=True)
