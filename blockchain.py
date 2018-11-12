@@ -102,6 +102,11 @@ class Blockchain(object):
         node = f'{parsed_url.scheme}://{parsed_url.netloc}'
         self.nodes.add(node)
 
+    def register_voter_node(self, address):
+        parsed_url = urlparse(address)
+        node = f'{parsed_url.scheme}://{parsed_url.netloc}'
+        self.voter_nodes.add(node)
+
     def valid_chain(self, chain):
         last_block = chain[self.last_consensus]
         current_index = self.last_consensus + 1

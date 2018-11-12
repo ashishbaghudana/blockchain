@@ -4,18 +4,20 @@ import pprint
 import random
 import sys
 from argparse import ArgumentParser
+from collections import defaultdict
 
 import requests
 from prompt_toolkit import HTML, PromptSession, print_formatted_text, prompt
 from prompt_toolkit.completion import WordCompleter
 
-REGISTER_URL = '%s/voter/new'
+VOTE_URL = '%s/vote/new'
 CHAIN_URL = '%s/chain'
 
 session = PromptSession()
-options = ['register', 'add_node', 'chain', 'exit']
+options = ['vote', 'add_node', 'chain', 'count', 'exit']
 options_completer = WordCompleter(options)
 nodes = set()
+candidates = {1, 2, 3, 4, 5}
 
 
 def get_chain():
@@ -25,13 +27,22 @@ def get_chain():
     print_formatted_text(pprint.pformat(response.json()))
 
 
+def get_count():
+    node = random.choice(list(nodes))
+    response = requests.get(CHAIN_URL % node)
+    chain = response.json()['chain']
+    vote_counts = defaultdict(int)
+    for block in chain:
+        for transaction in block['transactions']:
+            vote_counts[transaction['vote']] += 1
+    print_formatted_text(pprint.pformat(dict(vote_counts)))
+
+
 def usage():
     print_formatted_text(HTML('<b>VoterChain Options</b>'))
     print_formatted_text(HTML('Choose from'))
-    print_formatted_text(HTML('1. <u>register</u>'))
-    print_formatted_text(HTML('2. <u>add_node</u>'))
-    print_formatted_text(HTML('3. <u>chain</u>'))
-    print_formatted_text(HTML('4. <u>exit</u>'))
+    for i, option in enumerate(list(options)):
+        print_formatted_text(HTML('%s. <u>%s</u>' % (i + 1, option)))
 
 
 def add_node():
@@ -46,33 +57,48 @@ def add_node():
         nodes.add(node)
 
 
-def register():
+def voter_options():
+    print_formatted_text('Choose vote from options:')
+    for option in sorted(list(candidates)):
+        print_formatted_text(HTML('<skyblue>%s</skyblue>' % option))
+
+
+def vote():
     if len(nodes) == 0:
         print_formatted_text(
             HTML('<ansired>No nodes to register to. ' +
                  'Add using <b><u>add_node</u></b></ansired>'))
         return
     node = random.choice(list(nodes))
-    url = REGISTER_URL % node
+    url = VOTE_URL % node
 
-    name = prompt(HTML('<ansigreen>> Name of the voter: </ansigreen>'))
-    id = prompt(HTML('<ansigreen>> ID of the voter: </ansigreen>'))
+    voter_id = prompt(HTML('<ansigreen>> Voter ID of the voter: </ansigreen>'))
+    voter_options()
+    vote = prompt(HTML('<ansigreen>> Vote for the voter: </ansigreen>'))
     confirmation = prompt(
-        HTML(('Adding voter <b><u>%s</u></b> with ID <b><u>%s</u></b>. ' +
-              'Confirm? (y/n): ') % (name, id)))
+        HTML(('Voter <b><u>%s</u></b> voting for <b><u>%s</u></b>. ' +
+              'Confirm? (y/n): ') % (voter_id, vote)))
     if confirmation == 'n' or confirmation == 'no':
         return
     elif confirmation == 'y' or confirmation == 'yes':
-        response = requests.post(url, json={"name": name, "id": id})
+        response = requests.post(
+            url, json={
+                "voter_id": voter_id,
+                "vote": vote
+            })
         if response.ok:
-            voter_id = response.json()['identifier']
+            identifier = response.json()['identifier']
             print_formatted_text(
-                HTML(('<ansigreen>Successfully added voter. ' +
-                      'Your voter ID is <b><u>%s</u></b>.</ansigreen>') %
-                     voter_id))
+                HTML(('<ansigreen>Successfully voted. ' +
+                      'Your vote ID is <b><u>%s</u></b>.</ansigreen>') %
+                     identifier))
         else:
-            print_formatted_text(
-                HTML('<ansired>Voter registration failed.</ansired>'))
+            try:
+                error_msg = response.json()['message']
+                print_formatted_text(HTML('<ansired>%s</ansired>') % error_msg)
+            except Exception as e:
+                print_formatted_text(
+                    HTML('<ansired>Voting failed. Try again.</ansired>'))
 
 
 def populate_nodes(seedlist):
@@ -85,7 +111,8 @@ usage()
 options_function = {
     'exit': sys.exit,
     'add_node': add_node,
-    'register': register,
+    'vote': vote,
+    'count': get_count,
     'chain': get_chain
 }
 
@@ -93,8 +120,8 @@ parser = ArgumentParser()
 parser.add_argument(
     '-s',
     '--seedlist',
-    default='seedlist/voterchain.txt',
-    help='Default list of voterchain nodes',
+    default='seedlist/votechain.txt',
+    help='Default list of votechain nodes',
     required=False)
 args = parser.parse_args()
 

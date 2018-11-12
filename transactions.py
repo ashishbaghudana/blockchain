@@ -27,14 +27,16 @@ class Transaction(object):
 
 
 class Vote(Transaction):
-    def __init__(self, verifier, vote):
+    def __init__(self, voter_id, vote, verifier):
         super(Vote, self).__init__(type='vote')
-        self.verifier = verifier
+        self.voter_id = voter_id
         self.vote = vote
+        self.verifier = verifier
 
     def to_dictionary(self):
         value = {
             'type': self.type,
+            'voter_id': self.voter_id,
             'verifier': self.verifier,
             'vote': self.vote
         }
@@ -42,7 +44,7 @@ class Vote(Transaction):
 
     @staticmethod
     def from_json(value):
-        return Vote(value['verifier'], value['vote'])
+        return Vote(value['voter_id'], value['vote'], value['verifier'])
 
 
 class Voter(Transaction):

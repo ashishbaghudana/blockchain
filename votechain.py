@@ -7,7 +7,7 @@ class VoteChain(Blockchain):
         super(VoteChain, self).__init__()
         self.voter_nodes = set()
 
-    def new_transaction(self, verifier, vote):
+    def new_transaction(self, voter_id, vote, verifier):
         """Short summary.
 
         Parameters
@@ -23,7 +23,8 @@ class VoteChain(Blockchain):
             Description of returned object.
 
         """
-        self.current_transactions.append(Vote(verifier=verifier, vote=vote))
+        self.current_transactions.append(
+            Vote(voter_id=voter_id, vote=vote, verifier=verifier))
 
         return self.last_block.index + 1
 
