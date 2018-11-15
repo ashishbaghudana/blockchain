@@ -51,6 +51,8 @@ VPID8=$!
 python vote.py -p 6009 &> /dev/null &
 VPID9=$!
 
+sleep 10
+
 python 10_node_register.py 5000 5010 6000 6010
 
 trap ctrl_c INT
